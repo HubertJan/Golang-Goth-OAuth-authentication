@@ -8,13 +8,18 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/sessions"
 	"github.com/joho/godotenv"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
 	"github.com/markbates/goth/providers/google"
 )
 
-
+const (
+	key    = "randomString"
+	MaxAge = 86400 * 30
+	IsProd = false
+)
 
 func main() {
 	r := gin.Default()
@@ -27,23 +32,31 @@ func main() {
 	clientID := os.Getenv("CLIENT_ID")
 	clientSecret := os.Getenv("CLIENT_SECRET")
 	clientCallbackURL := os.Getenv("CLIENT_CALLBACK_URL")
+	sessionSecret := os.Getenv("SESSION_SECRET")
+	if sessionSecret == "" {
+		log.Fatalf("SESSION_SECRET environment variable is not set")
+		return
+	}
 
 	if clientID == "" || clientSecret == "" || clientCallbackURL == "" {
 		log.Fatal("Environment variables (CLIENT_ID, CLIENT_SECRET, CLIENT_CALLBACK_URL) are required")
 	}
+
+	store := sessions.NewCookieStore([]byte(key))
+	gothic.Store = store
 
 	goth.UseProviders(
 		google.New(clientID, clientSecret, clientCallbackURL))
 
 	r.LoadHTMLGlob("templates/*")
 
-	
 	r.GET("/", home)
 	r.GET("/auth/:provider", signInWithProvider)
 	r.GET("/auth/:provider/callback", callbackHandler)
 	r.GET("/success", Success)
+	r.GET("/signOut", signOut)
 
-	r.Run(":5000")
+	r.Run(":1234")
 }
 
 func home(c *gin.Context) {
@@ -60,6 +73,11 @@ func home(c *gin.Context) {
 	}
 }
 
+func signOut(c *gin.Context) {
+	gothic.Logout(c.Writer, c.Request)
+	c.Redirect(http.StatusTemporaryRedirect, "/")
+}
+
 func signInWithProvider(c *gin.Context) {
 	provider := c.Param("provider")
 	q := c.Request.URL.Query()
@@ -74,14 +92,13 @@ func callbackHandler(c *gin.Context) {
 	q := c.Request.URL.Query()
 	q.Add("provider", provider)
 	c.Request.URL.RawQuery = q.Encode()
-
-	_, err := gothic.CompleteUserAuth(c.Writer, c.Request)
+	user, err := gothic.CompleteUserAuth(c.Writer, c.Request)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
-	
 
+	log.Default().Printf("%s logged in. His full name is %s %s.", user.NickName, user.Email, user.LastName)
 	c.Redirect(http.StatusTemporaryRedirect, "/success")
 }
 
